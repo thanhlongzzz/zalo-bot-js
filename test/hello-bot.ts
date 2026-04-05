@@ -29,7 +29,11 @@ async function main() {
       const text = update.message?.text?.trim().toLowerCase();
 
       if (text === "hello") {
+        await update.message?.replyAction("typing");
         await update.message?.replyText(t("reply.hello"));
+        await update.message?.replyText(`ChatID: ${update.message?.chat.id}, User ID: ${update.message?.fromUser?.id}, Username: ${update.message?.fromUser?.displayName}`);
+        await update.message?.replySticker("eb64dc0ae14f0811515e");
+        await update.message?.replyPhoto("https://zalo-api.zadn.vn/1/2/a/e/3/12720/icon_pre/124x124.png", "Hello đây là test gửi ảnh");
       }
     }),
   );

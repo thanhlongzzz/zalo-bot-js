@@ -19,7 +19,8 @@
     "test:hello-bot": "npm run build && node ./dist/test/hello-bot.js",
     "test:token": "npm run build && node ./dist/test/check-token.js",
     "smoke": "node -e \"const sdk=require('./dist/src/index.js'); if(!sdk.Bot||!sdk.ApplicationBuilder||!sdk.filters){throw new Error('SDK exports are incomplete');} console.log('smoke ok');\"",
-    "test": "npm run check && npm run build && npm run smoke"
+    "test": "npm run check && npm run build && npm run smoke",
+    "start": "npm run build && node ./dist/production/index.js"
   },
   "repository": {
     "type": "git",
