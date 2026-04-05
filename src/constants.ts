@@ -1,4 +1,4 @@
-export const BASE_URL = "https://bot-api.zapps.me";
+export const BASE_URL = "https://bot-api.zaloplatforms.com";
 
 export const DEFAULT_POLL_TIMEOUT_SECONDS = 30;
 export const DEFAULT_RETRY_DELAY_MS = 1000;
