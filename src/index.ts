@@ -17,7 +17,7 @@ export { ApplicationBuilder } from "./core/ApplicationBuilder";
 export { CallbackContext } from "./core/Context";
 export { CommandHandler } from "./handlers/CommandHandler";
 export { MessageHandler } from "./handlers/MessageHandler";
-export { filters } from "./filters";
+export { filters, createFilter } from "./filters";
 export { Chat } from "./models/Chat";
 export { Message } from "./models/Message";
 export { Update } from "./models/Update";

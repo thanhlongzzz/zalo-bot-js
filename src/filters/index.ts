@@ -6,7 +6,7 @@ export type Filter = ((update: Update) => boolean) & {
   not: () => Filter;
 };
 
-function createFilter(predicate: (update: Update) => boolean): Filter {
+export function createFilter(predicate: (update: Update) => boolean): Filter {
   const filter = ((update: Update) => predicate(update)) as Filter;
   filter.and = (other: Filter) => createFilter((update) => filter(update) && other(update));
   filter.or = (other: Filter) => createFilter((update) => filter(update) || other(update));

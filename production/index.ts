@@ -7,6 +7,7 @@ import {
   CommandHandler,
   MessageHandler,
   filters,
+  createFilter,
   Update,
 } from "../src";
 
@@ -41,13 +42,14 @@ async function handleFollow(update: Update) {
 
   if (!chatId || !fromUser) return;
 
-  // Xác định topic từ command
+  // Xác định topic từ command: /follow-<topic> hoặc /follow <topic>
   let topic = "all";
   if (text.startsWith("/follow-")) {
     topic = text.substring(8).trim() || "all";
-  } else if (text === "/follow") {
-    topic = "all";
+  } else if (text.startsWith("/follow")) {
+    topic = text.substring(7).trim() || "all";
   } else {
+    // Không đạt điều kiện prefix, có thể bỏ qua hoặc báo lỗi (nhưng filter đã filter rồi)
     return;
   }
 
@@ -82,6 +84,50 @@ async function handleFollow(update: Update) {
   await db.write();
 
   await update.message?.replyText(`✅ [${fromUser.displayName || "Bạn"}] đã đăng ký nhận thông báo chủ đề: [${topic}]`);
+}
+
+async function handleUnfollow(update: Update) {
+  const text = update.message?.text || "";
+  const chatId = update.message?.chat.id;
+
+  if (!chatId || !db.data.users[chatId]) {
+    await update.message?.replyText("❌ Bạn chưa đăng ký nhận thông báo chủ đề nào.");
+    return;
+  }
+
+  let topic = "all";
+  if (text.startsWith("/unfollow-")) {
+    topic = text.substring(10).trim() || "all";
+  } else if (text.startsWith("/unfollow")) {
+    topic = text.substring(9).trim() || "all";
+  } else {
+    return;
+  }
+
+  const user = db.data.users[chatId];
+  if (topic === "all") {
+    user.topics = [];
+  } else {
+    user.topics = user.topics.filter((t: string) => t !== topic);
+  }
+
+  await db.write();
+  await update.message?.replyText(`✅ Đã hủy đăng ký nhận thông báo chủ đề: [${topic}]`);
+}
+
+async function handleShowTopics(update: Update) {
+  const chatId = update.message?.chat.id;
+  if (!chatId) return;
+
+  const user = db.data.users[chatId];
+
+  if (!user || !user.topics || user.topics.length === 0) {
+    await update.message?.replyText("📝 Bạn hiện chưa đăng ký nhận thông báo chủ đề nào.");
+    return;
+  }
+
+  const topicList = user.topics.map((t: string) => `- ${t}`).join("\n");
+  await update.message?.replyText(`📋 Các chủ đề bạn đang follow:\n${topicList}`);
 }
 
 async function echo(update: Update) {
@@ -136,7 +182,14 @@ async function main() {
     bot = app.bot;
   }
 
-  app.addHandler(new MessageHandler(filters.TEXT, handleFollow));
+  // Đăng ký các handler với filter cụ thể để tránh block lẫn nhau
+  app.addHandler(new MessageHandler(filters.TEXT.and(createFilter((u: Update) => u.message?.text?.startsWith("/follow") || false)), handleFollow));
+  app.addHandler(new MessageHandler(filters.TEXT.and(createFilter((u: Update) => u.message?.text?.startsWith("/unfollow") || false)), handleUnfollow));
+  app.addHandler(new MessageHandler(filters.TEXT.and(createFilter((u: Update) => {
+    const text = u.message?.text?.toLowerCase() || "";
+    return text === "/topics" || text === "/list" || text === "show all topic";
+  })), handleShowTopics));
+
   app.addHandler(new MessageHandler(filters.TEXT.and(filters.COMMAND.not()), echo));
 
   await bot.initialize();
