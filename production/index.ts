@@ -10,38 +10,100 @@ import {
   Update,
 } from "../src";
 
-// Trình mô phỏng Database lưu trữ danh sách Chat ID của người dùng đăng ký nhận tin
-const subscribedChatIds = new Set<string>();
+// Cấu trúc Database mới: Lưu thông tin chi tiết user và các topic họ quan tâm
+type UserData = {
+  chatId: string;
+  displayName?: string;
+  accountName?: string;
+  userId?: string;
+  accountType?: string;
+  canJoinGroups?: boolean;
+  topics: string[];
+  lastSeen: string;
+};
 
-async function follow(update: Update) {
+type DbSchema = {
+  users: Record<string, UserData>;
+};
+
+let db: any = null;
+
+async function initDB() {
+  const { JSONFilePreset } = await import("lowdb/node");
+  // Mặc định users là một object rỗng
+  db = await JSONFilePreset<DbSchema>("db.json", { users: {} });
+}
+
+async function handleFollow(update: Update) {
+  const text = update.message?.text || "";
   const chatId = update.message?.chat.id;
-  if (!chatId) return;
+  const fromUser = update.message?.fromUser;
 
-  subscribedChatIds.add(chatId);
-  await update.message?.replyText("Bạn đã đăng ký nhận thông báo định kỳ thành công!");
-  console.log(`User ${chatId} followed.`);
+  if (!chatId || !fromUser) return;
+
+  // Xác định topic từ command
+  let topic = "all";
+  if (text.startsWith("/follow-")) {
+    topic = text.substring(8).trim() || "all";
+  } else if (text === "/follow") {
+    topic = "all";
+  } else {
+    return;
+  }
+
+  // Khởi tạo hoặc cập nhật thông tin user
+  if (!db.data.users[chatId]) {
+    db.data.users[chatId] = {
+      chatId: chatId,
+      displayName: fromUser.displayName,
+      accountName: fromUser.accountName,
+      userId: fromUser.id,
+      accountType: fromUser.accountType,
+      canJoinGroups: fromUser.canJoinGroups,
+      topics: [],
+      lastSeen: new Date().toISOString(),
+    };
+  }
+
+  const user = db.data.users[chatId];
+  // Cập nhật thông tin mới nhất
+  user.displayName = fromUser.displayName || user.displayName;
+  user.accountName = fromUser.accountName || user.accountName;
+  user.userId = fromUser.id || user.userId;
+  user.accountType = fromUser.accountType || user.accountType;
+  user.canJoinGroups = fromUser.canJoinGroups || user.canJoinGroups;
+  user.lastSeen = new Date().toISOString();
+
+  // Thêm topic nếu chưa có
+  if (!user.topics.includes(topic)) {
+    user.topics.push(topic);
+  }
+
+  await db.write();
+
+  await update.message?.replyText(`✅ [${fromUser.displayName || "Bạn"}] đã đăng ký nhận thông báo chủ đề: [${topic}]`);
 }
 
 async function echo(update: Update) {
   if (!update.message?.text) return;
+  if (update.message.text.startsWith("/follow")) return;
   await update.message.replyText(`Bot nhận được: ${update.message.text}`);
 }
 
 function startBroadcasting(bot: Bot) {
-  console.log("Started broadcasting job (1 minute interval)...");
+  console.log("Started background job...");
   setInterval(async () => {
-    if (subscribedChatIds.size === 0) return;
+    const users = Object.values(db.data.users) as UserData[];
+    if (!db || users.length === 0) return;
 
-    const weatherUpdate = `🌤 Thông báo định kỳ!\nThời gian: ${new Date().toLocaleString()}`;
-    for (const chatId of subscribedChatIds) {
-      try {
-        await bot.sendMessage(chatId, weatherUpdate);
-        console.log(`Đã gửi thông báo cho ${chatId}`);
-      } catch (error) {
-        console.error(`Lỗi gửi thông báo cho ${chatId}:`, error);
+    for (const user of users) {
+      if (user.topics.includes("all")) {
+        try {
+          await bot.sendMessage(user.chatId, `🌤 Thông báo tự động lúc ${new Date().toLocaleTimeString()}`);
+        } catch (e) { }
       }
     }
-  }, 1000 * 60); // Gửi mỗi 60 giây (bạn có thể đổi thành 24h hoặc dùng cron)
+  }, 1000 * 60 * 60);
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -55,78 +117,97 @@ function readBody(req: IncomingMessage): Promise<string> {
 
 async function main() {
   loadEnv();
+  await initDB();
 
   const token = process.env.ZALO_BOT_TOKEN;
-  if (!token) {
-    throw new Error("Missing ZALO_BOT_TOKEN");
+  if (!token) throw new Error("Missing ZALO_BOT_TOKEN");
+
+  const useWebhook = process.env.USE_WEBHOOK === "true";
+  const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+
+  let bot: Bot;
+  let app: Application;
+
+  if (useWebhook) {
+    bot = new Bot({ token });
+    app = new Application(bot);
+  } else {
+    app = new ApplicationBuilder().token(token).build();
+    bot = app.bot;
   }
 
-  // Dựa vào biến môi trường để chạy Webhook hoặc Polling
-  const useWebhook = process.env.USE_WEBHOOK === "true";
-  
+  app.addHandler(new MessageHandler(filters.TEXT, handleFollow));
+  app.addHandler(new MessageHandler(filters.TEXT.and(filters.COMMAND.not()), echo));
+
+  await bot.initialize();
+
   if (useWebhook) {
-    console.log("⚡ Bot đang chạy ở chế độ Webhook...");
     const webhookUrl = process.env.ZALO_WEBHOOK_URL;
     const secretToken = process.env.ZALO_WEBHOOK_SECRET ?? "replace-me";
-
-    if (!webhookUrl) {
-      throw new Error("Missing ZALO_WEBHOOK_URL for webhook mode");
-    }
-
-    const bot = new Bot({ token });
-    const app = new Application(bot);
-
-    app.addHandler(new CommandHandler("follow", follow));
-    app.addHandler(new MessageHandler(filters.TEXT.and(filters.COMMAND.not()), echo));
-
-    await bot.initialize();
+    if (!webhookUrl) throw new Error("Missing ZALO_WEBHOOK_URL");
     await bot.setWebhook(webhookUrl, secretToken);
+  } else {
+    void app.runPolling();
+  }
 
-    // Bắt đầu job thông báo
-    startBroadcasting(bot);
+  startBroadcasting(bot);
 
-    const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-      if (req.method !== "POST" || req.url !== "/webhook") {
-        res.statusCode = 404;
-        res.end("not found");
-        return;
-      }
-
+  const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    if (useWebhook && req.method === "POST" && req.url === "/webhook") {
       try {
         const body = await readBody(req);
-        const payload = JSON.parse(body) as { result?: Record<string, unknown> };
+        const payload = JSON.parse(body);
         const update = Update.fromApi(payload.result as never, bot);
-
-        if (update) {
-          await app.processUpdate(update);
-        }
-
-        res.statusCode = 200;
+        if (update) await app.processUpdate(update);
         res.end("ok");
       } catch (error) {
-        console.error("Webhook process error:", error);
         res.statusCode = 500;
         res.end("error");
       }
-    });
+      return;
+    }
 
-    const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
-    server.listen(port, () => {
-      console.log(`🌐 Webhook server is listening on port ${port}`);
-    });
+    if (req.method === "POST" && req.url === "/broadcast") {
+      try {
+        const body = await readBody(req);
+        const { message, topic } = JSON.parse(body);
+        const targetTopic = topic || "all";
 
-  } else {
-    console.log("🔄 Bot đang chạy ở chế độ Polling...");
-    const app = new ApplicationBuilder().token(token).build();
-    
-    app.addHandler(new CommandHandler("follow", follow));
-    app.addHandler(new MessageHandler(filters.TEXT.and(filters.COMMAND.not()), echo));
+        if (!message) {
+          res.statusCode = 400;
+          res.end("Missing message");
+          return;
+        }
 
-    // Bắt đầu job thông báo
-    startBroadcasting(app.bot);
+        const users = Object.values(db.data.users) as UserData[];
+        let count = 0;
 
-    await app.runPolling();
-  }
+        for (const user of users) {
+          if (targetTopic === "all" || user.topics.includes(targetTopic)) {
+            try {
+              await bot.sendMessage(user.chatId, `[${targetTopic.toUpperCase()}] ${message}`);
+              count++;
+            } catch (err) {
+              console.error(`Lỗi gửi tới ${user.chatId}:`, err);
+            }
+          }
+        }
+
+        res.end(JSON.stringify({ status: "success", delivered: count, topic: targetTopic }));
+      } catch (error) {
+        res.statusCode = 500;
+        res.end("Error");
+      }
+      return;
+    }
+
+    res.statusCode = 404;
+    res.end("Not Found");
+  });
+
+  server.listen(port, () => {
+    console.log(`🌐 Server running at port ${port}`);
+  });
 }
 
 void main().catch((err) => {

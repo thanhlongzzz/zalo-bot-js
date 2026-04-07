@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  zalo-bot:
+    build: .
+    container_name: zalo-bot-server
+    ports:
+      - "5005:5005"
+    volumes:
+      # Mapping .env để dễ dàng thay đổi cấu hình mà không cần build lại image
+      - ./.env:/app/.env
+      # Mapping db.json để dữ liệu follow được lưu trữ (persist) ở máy host
+      - ./db.json:/app/db.json
+    environment:
+      - PORT=5005
+    restart: always
