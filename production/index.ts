@@ -97,7 +97,7 @@ function startBroadcasting(bot: Bot) {
     if (!db || users.length === 0) return;
 
     for (const user of users) {
-      if (user.topics.includes("all")) {
+      if (user.topics.includes("auto")) {
         try {
           await bot.sendMessage(user.chatId, `🌤 Thông báo tự động lúc ${new Date().toLocaleTimeString()}`);
         } catch (e) { }
