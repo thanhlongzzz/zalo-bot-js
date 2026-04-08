@@ -27,27 +27,66 @@ type DbSchema = {
   users: Record<string, UserData>;
 };
 
+// Queue helper to serialize database writes and avoid EBUSY errors
+class WriteQueue {
+  private queue: Promise<void> = Promise.resolve();
+
+  async add(operation: () => Promise<void>): Promise<void> {
+    this.queue = this.queue.then(async () => {
+      try {
+        await operation();
+      } catch (error) {
+        console.error("Database write error in queue:", error);
+      }
+    });
+    return this.queue;
+  }
+}
+
 let db: any = null;
+const writeQueue = new WriteQueue();
 
 import fs from "node:fs";
+import path from "node:path";
 
 async function initDB() {
   const { JSONFilePreset } = await import("lowdb/node");
   // Mặc định users là một object rỗng
   const defaultData: DbSchema = { users: {} };
+  const dbPath = "data/db.json";
+  const oldDbPath = "db.json";
+
+  // Migrations: Di chuyển db.json cũ vào thư mục data nếu tồn tại
+  if (fs.existsSync(oldDbPath) && !fs.existsSync(dbPath)) {
+    const dbDir = path.dirname(dbPath);
+    if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+    try {
+      fs.renameSync(oldDbPath, dbPath);
+      console.log(`📦 Moved ${oldDbPath} to ${dbPath}`);
+    } catch (e) {
+      console.warn(`⚠️ Could not move ${oldDbPath} to ${dbPath}, will use default content.`);
+    }
+  }
+
+  // Đảm bảo thư mục data tồn tại để tránh lỗi EBUSY khi mount file trực tiếp trong Docker
+  const dbDir = path.dirname(dbPath);
+  if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
+
   try {
-    db = await JSONFilePreset<DbSchema>("db.json", defaultData);
+    db = await JSONFilePreset<DbSchema>(dbPath, defaultData);
   } catch (error: any) {
     if (error instanceof SyntaxError) {
-      console.warn("⚠️ db.json is corrupted or empty. Re-initializing with default data...");
+      console.warn(`⚠️ ${dbPath} is corrupted or empty. Re-initializing with default data...`);
       try {
-        const content = fs.readFileSync("db.json", "utf-8");
+        const content = fs.readFileSync(dbPath, "utf-8");
         if (content.trim()) {
-           fs.writeFileSync("db.json.bak", content);
+           fs.writeFileSync(`${dbPath}.bak`, content);
         }
       } catch (e) {}
-      fs.writeFileSync("db.json", JSON.stringify(defaultData, null, 2));
-      db = await JSONFilePreset<DbSchema>("db.json", defaultData);
+      fs.writeFileSync(dbPath, JSON.stringify(defaultData, null, 2));
+      db = await JSONFilePreset<DbSchema>(dbPath, defaultData);
     } else {
       throw error;
     }
@@ -100,7 +139,7 @@ async function handleFollow(update: Update) {
     user.topics.push(topic);
   }
 
-  await db.write();
+  await writeQueue.add(() => db.write());
 
   await update.message?.replyText(`✅ [${fromUser.displayName || "Bạn"}] đã đăng ký nhận thông báo chủ đề: [${topic}]`);
 }
@@ -130,7 +169,7 @@ async function handleUnfollow(update: Update) {
     user.topics = user.topics.filter((t: string) => t !== topic);
   }
 
-  await db.write();
+  await writeQueue.add(() => db.write());
   await update.message?.replyText(`✅ Đã hủy đăng ký nhận thông báo chủ đề: [${topic}]`);
 }
 

@@ -9,8 +9,8 @@ services:
     volumes:
       # Mapping .env để dễ dàng thay đổi cấu hình mà không cần build lại image
       - ./.env:/app/.env
-      # Mapping db.json để dữ liệu follow được lưu trữ (persist) ở máy host
-      - ./db.json:/app/db.json
+      # Mapping thư mục data để lưu trữ database (tránh lỗi EBUSY khi mount file trực tiếp)
+      - ./data:/app/data
     environment:
       - PORT=5005
     restart: always
