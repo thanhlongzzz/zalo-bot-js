@@ -29,10 +29,29 @@ type DbSchema = {
 
 let db: any = null;
 
+import fs from "node:fs";
+
 async function initDB() {
   const { JSONFilePreset } = await import("lowdb/node");
   // Mặc định users là một object rỗng
-  db = await JSONFilePreset<DbSchema>("db.json", { users: {} });
+  const defaultData: DbSchema = { users: {} };
+  try {
+    db = await JSONFilePreset<DbSchema>("db.json", defaultData);
+  } catch (error: any) {
+    if (error instanceof SyntaxError) {
+      console.warn("⚠️ db.json is corrupted or empty. Re-initializing with default data...");
+      try {
+        const content = fs.readFileSync("db.json", "utf-8");
+        if (content.trim()) {
+           fs.writeFileSync("db.json.bak", content);
+        }
+      } catch (e) {}
+      fs.writeFileSync("db.json", JSON.stringify(defaultData, null, 2));
+      db = await JSONFilePreset<DbSchema>("db.json", defaultData);
+    } else {
+      throw error;
+    }
+  }
 }
 
 async function handleFollow(update: Update) {
